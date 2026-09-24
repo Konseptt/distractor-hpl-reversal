@@ -1,0 +1,14 @@
+# Core (simulation, tests, schedule generation) — works on Python 3.9+
+PyYAML>=6.0
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+pytest>=7.0
+
+# Interactive PsychoPy runs require Python 3.10–3.12 (NOT 3.13/3.14).
+# Install with a compatible interpreter, e.g.:
+#   /opt/homebrew/bin/python3.12 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+psychopy>=2024.2.0,<2027
+pylsl>=1.16.0

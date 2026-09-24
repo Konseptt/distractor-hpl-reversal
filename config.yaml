@@ -1,0 +1,77 @@
+experiment:
+  version: "1.0.0"
+  mode: reversal  # reversal | stable
+  blocks: 6
+  trials_per_block: 80
+  practice_trials: 20
+  acquisition_blocks: 3
+  keys:
+    horizontal: f
+    vertical: j
+
+probabilities:
+  distractor_present: 0.80
+  hpl_given_distractor: 0.70
+
+timing:
+  fixation_min: 0.8
+  fixation_max: 1.2
+  search_timeout: 2.0
+  iti_min: 0.8
+  iti_max: 1.2
+  feedback_duration: 0.6
+  # simulate mode uses shorter waits
+  simulate_fixation: 0.01
+  simulate_iti: 0.01
+  simulate_feedback: 0.01
+
+display:
+  positions: 8
+  eccentricity_deg: 6.0
+  background: [0.5, 0.5, 0.5]
+  nontarget_color: green
+  distractor_color: red
+  target_shape: diamond
+  nontarget_shape: circle
+  item_size_deg: 1.5
+  line_length_deg: 0.8
+  line_width_deg: 0.12
+  fixation_size_deg: 0.4
+  fullscreen: true
+  units: deg
+
+monitor:
+  name: experiment_monitor
+  width_cm: 53.0
+  distance_cm: 60.0
+  resolution: [1920, 1080]
+
+spatial:
+  left_hpl: 6
+  right_hpl: 2
+
+sequence:
+  max_consecutive_hpl: 4
+  max_consecutive_orientation: 4
+  max_generation_attempts: 500
+
+validation:
+  rate_tolerance: 0.05
+  target_count_max_diff: 2
+  orientation_tolerance: 0.08
+
+fixation_monitoring:
+  radius_deg: 1.75
+  reject_on_break: false
+
+hardware:
+  eye_tracker: mock  # mock | real (real adapters later)
+  eeg_markers: mock  # mock | lsl
+
+simulation:
+  response_accuracy: 0.90
+  mean_rt_ms: 550
+  rt_sd_ms: 80
+
+# optional override; null uses participant_id|session_id|version hash
+random_seed: null
