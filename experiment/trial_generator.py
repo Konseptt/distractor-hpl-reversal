@@ -131,6 +131,14 @@ def _max_run(seq: list[Any]) -> int:
     return best
 
 
+def _max_run_true(flags: list[bool]) -> int:
+    best = cur = 0
+    for f in flags:
+        cur = cur + 1 if f else 0
+        best = max(best, cur)
+    return best
+
+
 def _repair_runs(seq: list[Any], max_run: int, rng: Any, attempts: int = 200) -> list[Any]:
     """Greedy local swaps to reduce consecutive runs."""
     seq = list(seq)
@@ -156,6 +164,8 @@ def _repair_runs(seq: list[Any], max_run: int, rng: Any, attempts: int = 200) ->
                             seq[mid], seq[j] = seq[j], seq[mid]
                             break
             run_start = run_end
+        if _max_run(seq) <= max_run:
+            return seq
         rng.shuffle(seq)  # last resort reshuffle then continue
     return seq
 
@@ -319,44 +329,48 @@ def _try_generate_block(
                 distractor_locs[i] = rng.choice(choices)
             distractor_is_hpl_flags[i] = distractor_locs[i] == hpl
 
-        # Repair consecutive HPL runs by swapping HPL status with a later LP-eligible trial
-        for _ in range(200):
-            hpl_run_flags = [distractor_is_hpl_flags[i] for i in range(n_trials)]
-            if _max_run([1 if x else 0 for x in hpl_run_flags]) <= max_consecutive_hpl:
+        # Repair HPL runs: move HPL status from inside an over-long run to an
+        # LP trial where it creates no new over-long run; swap the two
+        # distractor locations so LP location balance is preserved.
+        flags = distractor_is_hpl_flags
+
+        def run_len(j: int) -> int:
+            lo = hi = j
+            while lo > 0 and flags[lo - 1]:
+                lo -= 1
+            while hi < n_trials - 1 and flags[hi + 1]:
+                hi += 1
+            return hi - lo + 1
+
+        for _ in range(n_trials):
+            mid = next(
+                (i for i in range(max_consecutive_hpl, n_trials)
+                 if all(flags[i - max_consecutive_hpl:i + 1])),
+                None,
+            )
+            if mid is None:
                 break
-            run_start = 0
-            repaired = False
-            while run_start < n_trials:
-                if not hpl_run_flags[run_start]:
-                    run_start += 1
-                    continue
-                run_end = run_start + 1
-                while run_end < n_trials and hpl_run_flags[run_end]:
-                    run_end += 1
-                if run_end - run_start > max_consecutive_hpl:
-                    mid = run_start + max_consecutive_hpl
-                    # find an LP DP trial outside this run that is HPL-eligible
-                    for j in list(range(run_end, n_trials)) + list(range(0, run_start)):
-                        if (
-                            present_flags[j]
-                            and not distractor_is_hpl_flags[j]
-                            and targets[j] != hpl
-                        ):
-                            # swap HPL assignment
-                            old_mid_lp_choices = [
-                                p for p in range(n_positions) if p != targets[mid] and p != hpl
-                            ]
-                            if not old_mid_lp_choices:
-                                continue
-                            distractor_locs[mid] = rng.choice(old_mid_lp_choices)
-                            distractor_is_hpl_flags[mid] = False
-                            distractor_locs[j] = hpl
-                            distractor_is_hpl_flags[j] = True
-                            repaired = True
-                            break
-                run_start = max(run_end, run_start + 1)
-            if not repaired:
-                break
+            flags[mid] = False
+            cands = []
+            for j in range(n_trials):
+                if present_flags[j] and not flags[j] and j != mid and targets[j] != hpl:
+                    flags[j] = True
+                    if run_len(j) <= max_consecutive_hpl:
+                        cands.append(j)
+                    flags[j] = False
+            if not cands:
+                raise ScheduleGenerationError("cannot repair HPL run")
+            j = rng.choice(cands)
+            lp_loc = distractor_locs[j]
+            if lp_loc == targets[mid]:
+                lp_loc = rng.choice(
+                    [p for p in range(n_positions) if p != targets[mid] and p != hpl]
+                )
+            distractor_locs[mid] = lp_loc
+            distractor_locs[j] = hpl
+            flags[j] = True
+        if _max_run_true(flags) > max_consecutive_hpl:
+            raise ScheduleGenerationError("HPL run constraint unsatisfied")
 
         # Verify exact quota preserved
         n_hpl_final = sum(1 for i in dp_indices if distractor_is_hpl_flags[i])
@@ -558,9 +572,9 @@ def generate_session_schedules(config: dict[str, Any], participant_id: str, sess
         right_hpl=int(spatial["right_hpl"]),
     )
 
-    reversal_global_index: Optional[int] = None
-    if mode == "reversal":
-        reversal_global_index = acq * trials_per_block + 1  # first reversal trial global number
+    # First reversal trial's global number. Set in stable mode too (virtual
+    # reversal) so the control group gets a matched trial_relative_to_reversal.
+    reversal_global_index: Optional[int] = acq * trials_per_block + 1
 
     p_cond = conditional_hpl_probability(probs["hpl_given_distractor"], n_positions)
 

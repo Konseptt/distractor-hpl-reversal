@@ -90,9 +90,14 @@ class SearchDisplay:
             start=(-self.line_length / 2, 0),
             end=(self.line_length / 2, 0),
             lineColor="black",
-            lineWidth=2,
+            lineWidth=self._deg2pix(self.line_width),  # lineWidth is in pixels
         )
         self.message = visual.TextStim(win, text="", color="white", height=0.6, wrapWidth=20)
+
+    def _deg2pix(self, deg: float) -> float:
+        from psychopy.tools.monitorunittools import deg2pix
+
+        return max(1.0, float(deg2pix(deg, self.win.monitor)))
 
     def draw_fixation(self) -> None:
         self.fixation.draw()

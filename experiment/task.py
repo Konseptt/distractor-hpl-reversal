@@ -60,11 +60,15 @@ class Experiment:
             return self._exp_clock.getTime()
         return time.perf_counter()
 
-    def _emit(self, event_name: str, *, trial_id=None, block=None, metadata=None) -> float:
+    def _emit(self, event_name: str, *, trial_id=None, block=None, metadata=None, at_flip=None) -> float:
+        """Send marker + log event. With at_flip, the marker was already sent via
+        callOnFlip and at_flip (flip timestamp) is logged as the event time."""
         code = EVENT_CODES[event_name]
-        # Prefer experiment clock for behavioral log; marker backend may use its own.
-        ts_marker = self.markers.send_marker(code, metadata=metadata)
-        ts = self._now()
+        if at_flip is None:
+            ts_marker = self.markers.send_marker(code, metadata=metadata)
+            ts = self._now()
+        else:
+            ts_marker, ts = None, at_flip
         self.eye_tracker.send_message(f"{event_name}:{code}")
         if self.logger is not None:
             self.logger.log_event(
@@ -76,6 +80,30 @@ class Experiment:
                 metadata=metadata if metadata is not None else {"marker_ts": ts_marker},
             )
         return ts
+
+    def _log_gaze(self, trial: TrialSpec):
+        """Log the latest tracker sample for this trial; return it (or None)."""
+        sample = self.eye_tracker.get_latest_sample()
+        if sample is not None:
+            self.logger.log_gaze(
+                {
+                    "experiment_timestamp": self._now(),
+                    "tracker_timestamp": sample.tracker_timestamp,
+                    "trial_id": trial.trial_number_global,
+                    "block": trial.block,
+                    "phase": trial.phase,
+                    "x": sample.x,
+                    "y": sample.y,
+                    "pupil": sample.pupil,
+                    "validity": sample.validity,
+                }
+            )
+        return sample
+
+    def _flip_with_marker(self, event_name: str, draw_fn) -> float:
+        """Draw, flip, and send the marker immediately after the flip returns."""
+        self.win.callOnFlip(self.markers.send_marker, EVENT_CODES[event_name])
+        return flip_onset(self.win, draw_fn)
 
     def _wait_key(self, keys=("space",), timeout=None):
         if self.simulate:
@@ -129,7 +157,7 @@ class Experiment:
 
         self.win = create_window(self.config, simulate=self.simulate)
         self.display = SearchDisplay(self.win, self.config)
-        self._exp_clock = core.Clock()
+        self._exp_clock = core.monotonicClock  # same timebase as win.flip()
         self.clock_t0 = self._exp_clock
 
         self.eye_tracker.initialize()
@@ -137,6 +165,12 @@ class Experiment:
             self.eye_tracker.calibrate()
         self.markers.initialize()
         self.eye_tracker.start_recording()
+        if not self.simulate:
+            from psychopy.hardware import keyboard
+
+            self.kb = keyboard.Keyboard(
+                backend=self.config["hardware"].get("keyboard_backend", "event")
+            )
 
     def run(self) -> dict[str, Any]:
         self.setup()
@@ -173,7 +207,7 @@ class Experiment:
                     block_trials,
                     {"phase": phase, "hpl": hpl},
                 )
-                if first_exp:
+                if first_exp and mode == "reversal":
                     self._emit("PHASE_ACQUISITION", block=b, trial_id=None)
                     first_exp = False
                 if (
@@ -245,12 +279,13 @@ class Experiment:
         else:
             fix_dur = sample_duration(timing["fixation_min"], timing["fixation_max"], self.rng)
 
-        fix_onset = flip_onset(self.win, self.display.draw_fixation)
+        fix_onset = self._flip_with_marker("FIXATION_ON", self.display.draw_fixation)
         self._emit(
             "FIXATION_ON",
             trial_id=trial.trial_number_global,
             block=trial.block,
             metadata={"scheduled_ms": fix_dur * 1000},
+            at_flip=fix_onset,
         )
 
         # Pre-stimulus monitoring (observational; no gaze-contingent display change)
@@ -259,30 +294,15 @@ class Experiment:
             core.wait(fix_dur)
         else:
             # redraw fixation while waiting; monitor gaze
-            fix_clock = core.Clock()
             fixation_break = False
             radius = float(self.config["fixation_monitoring"]["radius_deg"])
-            while fix_clock.getTime() < fix_dur:
-                sample = self.eye_tracker.get_latest_sample()
+            while core.getTime() - fix_onset < fix_dur:
+                sample = self._log_gaze(trial)
                 if sample is not None:
-                    self.logger.log_gaze(
-                        {
-                            "experiment_timestamp": self._now(),
-                            "tracker_timestamp": sample.tracker_timestamp,
-                            "trial_id": trial.trial_number_global,
-                            "block": trial.block,
-                            "phase": trial.phase,
-                            "x": sample.x,
-                            "y": sample.y,
-                            "pupil": sample.pupil,
-                            "validity": sample.validity,
-                        }
-                    )
                     if sample.validity >= 0.5 and math.hypot(sample.x, sample.y) > radius:
                         fixation_break = True
                 self.display.draw_fixation()
                 self.win.flip()
-            self.logger.flush_gaze()
 
         if fixation_break and self.config["fixation_monitoring"].get("reject_on_break", False):
             # Still run trial; flag only unless configured — reject path reserved
@@ -295,7 +315,6 @@ class Experiment:
             distractor_present=trial.distractor_present,
             distractor_location=trial.distractor_location,
         )
-        array_onset = flip_onset(self.win, self.display.draw_array)
         arr_name = {
             "S30": "ARRAY_ON_ABSENT",
             "S31": "ARRAY_ON_HPL",
@@ -306,7 +325,11 @@ class Experiment:
                 distractor_is_hpl=trial.distractor_is_HPL,
             )
         ]
-        self._emit(arr_name, trial_id=trial.trial_number_global, block=trial.block)
+        if not self.simulate:
+            self.kb.clearEvents()  # drop anticipatory presses before onset
+            self.win.callOnFlip(self.kb.clock.reset)  # key.rt measured from array flip
+        array_onset = self._flip_with_marker(arr_name, self.display.draw_array)
+        self._emit(arr_name, trial_id=trial.trial_number_global, block=trial.block, at_flip=array_onset)
 
         timeout = float(timing["search_timeout"])
         timed_out = False
@@ -319,24 +342,24 @@ class Experiment:
             core.wait(min(rt_s, 0.001))
             resp_time = self._now()
         else:
-            event.clearEvents()
-            resp_clock = core.Clock()
             while True:
-                these = event.getKeys(keyList=allowed + ["escape"], timeStamped=resp_clock)
+                these = self.kb.getKeys(keyList=allowed + ["escape"], waitRelease=False)
                 if these:
-                    key, rt_s = these[0]
+                    key, rt_s = these[0].name, these[0].rt
                     if key == "escape":
                         raise KeyboardInterrupt("Escape pressed")
                     response_key = key
                     resp_time = self._now()
                     break
-                if resp_clock.getTime() >= timeout:
+                if core.getTime() - array_onset >= timeout:
                     timed_out = True
                     rt_s = timeout
                     resp_time = self._now()
                     break
+                self._log_gaze(trial)
                 self.display.draw_array()
                 self.win.flip()
+            self.logger.flush_gaze()
 
         correct = (
             (not timed_out)

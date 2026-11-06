@@ -82,6 +82,10 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
 
     rng = random.Random(session["seed"] + 1)
     sim = config.get("simulation", {})
+    n_pos = int(config["display"]["positions"])
+    capture = float(sim.get("capture_cost_ms", 0)) / 1000.0
+    lr = float(sim.get("learning_rate", 0))
+    w = [1.0 / n_pos] * n_pos  # learned P(distractor at location)
     t = 0.0
 
     def emit(name, trial_id=None, block=None, metadata=None):
@@ -108,7 +112,8 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
     emit("BLOCK_START", block=0, metadata={"practice": True})
     emit("BLOCK_END", block=0)
 
-    emit("PHASE_ACQUISITION", block=1)
+    if config["experiment"]["mode"] == "reversal":
+        emit("PHASE_ACQUISITION", block=1)
     first_rev = True
     for block_trials in session["blocks"]:
         b = block_trials[0].block
@@ -124,8 +129,10 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
             first_rev = False
         emit("BLOCK_START", block=b, metadata={"phase": phase, "hpl": hpl})
         for trial in block_trials:
-            t += float(config["timing"]["simulate_fixation"])
+            trial_start = t
             emit("FIXATION_ON", trial_id=trial.trial_number_global, block=b)
+            t += float(config["timing"]["simulate_fixation"])
+            onset = t
             code = array_onset_code(
                 distractor_present=trial.distractor_present,
                 distractor_is_hpl=trial.distractor_is_HPL,
@@ -139,7 +146,12 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
 
             mean_rt = float(sim.get("mean_rt_ms", 550)) / 1000.0
             sd = float(sim.get("rt_sd_ms", 80)) / 1000.0
-            rt = max(0.15, rng.gauss(mean_rt, sd))
+            rt = rng.gauss(mean_rt, sd)
+            if trial.distractor_present:
+                loc = trial.distractor_location
+                rt += capture * (1.0 - w[loc])
+                w = [wi + lr * ((i == loc) - wi) for i, wi in enumerate(w)]
+            rt = max(0.15, rt)
             timed_out = rt > float(config["timing"]["search_timeout"])
             correct = (not timed_out) and (rng.random() < float(sim.get("response_accuracy", 0.9)))
             key = trial.correct_response if correct else (
@@ -153,8 +165,9 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
                 "S41": "RESP_INCORRECT",
                 "S42": "RESP_TIMEOUT",
             }[response_code(timed_out=timed_out, correct=correct)]
+            t = onset + min(rt, float(config["timing"]["search_timeout"]))
             emit(rname, trial_id=trial.trial_number_global, block=b)
-            t += rt + float(config["timing"]["simulate_iti"])
+            t += float(config["timing"]["simulate_iti"])
 
             sample = et.get_latest_sample()
             if sample:
@@ -198,9 +211,9 @@ def run_headless_simulate(config: dict, meta: dict, data_root: Path) -> int:
                     "accuracy": int(correct),
                     "reaction_time_ms": "" if timed_out else round(rt * 1000, 3),
                     "fixation_duration_ms": float(config["timing"]["simulate_fixation"]) * 1000,
-                    "array_actual_onset_time": t,
-                    "response_time": t + rt,
-                    "trial_start_time": t,
+                    "array_actual_onset_time": onset,
+                    "response_time": onset + min(rt, float(config["timing"]["search_timeout"])),
+                    "trial_start_time": trial_start,
                     "fixation_break": False,
                     "timed_out": timed_out,
                     "frame_intervals_mean": "",
@@ -296,7 +309,7 @@ def main(argv=None) -> int:
             f"ERROR: Interactive PsychoPy needs Python 3.10–3.12 "
             f"(you have {vi.major}.{vi.minor}.{vi.micro}).\n\n"
             "Create a venv and re-run:\n"
-            "  cd /Users/sharm/Untitled/distractor-hpl-reversal\n"
+            "  cd <repo root>\n"
             "  /opt/homebrew/bin/python3.12 -m venv .venv\n"
             "  source .venv/bin/activate\n"
             "  pip install -r requirements.txt\n"

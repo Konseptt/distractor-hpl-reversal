@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any, Optional
 
@@ -41,8 +40,8 @@ class LSLMarkers(EventMarker):
         if self._outlet is None:
             raise RuntimeError("LSLMarkers not initialized")
         ts = time.perf_counter() - self._t0
-        payload = code if not metadata else f"{code}|{json.dumps(metadata, default=str)}"
-        self._outlet.push_sample([payload])
+        # Bare code only: EEG event mapping needs fixed strings; metadata lives in events.csv.
+        self._outlet.push_sample([code])
         return ts
 
     def close(self) -> None:

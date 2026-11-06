@@ -67,11 +67,18 @@ fixation_monitoring:
 hardware:
   eye_tracker: mock  # mock | real (real adapters later)
   eeg_markers: mock  # mock | lsl
+  # event = frame-locked polling (works everywhere); ptb = sub-ms psychtoolbox
+  # (macOS: grant the terminal Input Monitoring first or Keyboard() segfaults)
+  keyboard_backend: event
 
 simulation:
   response_accuracy: 0.90
   mean_rt_ms: 550
   rt_sd_ms: 80
+  # headless sim observer: delta-rule learner of distractor-location probability.
+  # RT cost of a distractor = capture_cost_ms * (1 - learned p at its location).
+  capture_cost_ms: 60
+  learning_rate: 0.05
 
 # optional override; null uses participant_id|session_id|version hash
 random_seed: null

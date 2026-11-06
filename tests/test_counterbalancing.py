@@ -79,9 +79,10 @@ def test_reversal_happens_at_correct_trial():
     assert first_rev.current_HPL == 2
 
 
-def test_stable_relative_to_reversal_is_none():
+def test_stable_has_virtual_reversal_index():
     cfg = {**CONFIG, "random_seed": 10, "experiment": {**CONFIG["experiment"], "mode": "stable"}}
     session = generate_session_schedules(cfg, participant_id="1", session_id="a")
-    assert session["reversal_global_index"] is None
+    exp = CONFIG["experiment"]
+    assert session["reversal_global_index"] == exp["acquisition_blocks"] * exp["trials_per_block"] + 1
     all_exp = [t for block in session["blocks"] for t in block]
-    assert all(t.trial_relative_to_reversal is None for t in all_exp)
+    assert all(t.trial_relative_to_reversal is not None for t in all_exp)

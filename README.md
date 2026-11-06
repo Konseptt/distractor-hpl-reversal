@@ -22,7 +22,7 @@ Target location is assigned first (balanced across positions). The distractor is
 PsychoPy does **not** support Python 3.13/3.14. Use **Python 3.12** (already on this machine via Homebrew):
 
 ```bash
-cd /Users/sharm/Untitled/distractor-hpl-reversal
+cd distractor-hpl-reversal
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 Then always activate the venv before running:
 
 ```bash
-cd /Users/sharm/Untitled/distractor-hpl-reversal
+cd distractor-hpl-reversal
 source .venv/bin/activate
 python main.py --participant 99 --session trial
 ```

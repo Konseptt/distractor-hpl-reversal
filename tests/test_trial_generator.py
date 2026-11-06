@@ -109,3 +109,31 @@ def test_seed_reproduces_schedule():
 def test_hash_seed_stable():
     assert hash_seed("001", "1") == hash_seed("001", "1")
     assert hash_seed("001", "1") != hash_seed("002", "1")
+
+
+def test_hpl_runs_capped_and_lp_balanced():
+    max_run = CONFIG["sequence"]["max_consecutive_hpl"]
+    for seed in range(40):
+        trials = _gen_block(hpl=6, seed=seed)
+        run = best = 0
+        for t in trials:
+            run = run + 1 if t.distractor_is_HPL else 0
+            best = max(best, run)
+        assert best <= max_run
+        lp = [t.distractor_location for t in trials if t.distractor_present and not t.distractor_is_HPL]
+        counts = [lp.count(i) for i in range(8) if i != 6]
+        assert max(counts) - min(counts) <= 4
+
+
+def test_stable_mode_has_virtual_reversal_alignment():
+    import contextlib, copy, io
+
+    cfg = copy.deepcopy(CONFIG)
+    sessions = {}
+    for mode in ("reversal", "stable"):
+        cfg["experiment"]["mode"] = mode
+        with contextlib.redirect_stdout(io.StringIO()):
+            sessions[mode] = generate_session_schedules(cfg, "3", "1")
+    rel = {m: [t.trial_relative_to_reversal for b in s["blocks"] for t in b] for m, s in sessions.items()}
+    assert rel["stable"] == rel["reversal"]
+    assert None not in rel["stable"] and 0 not in rel["stable"]
